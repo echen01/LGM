@@ -9,6 +9,8 @@ from diff_gaussian_rasterization import (
     GaussianRasterizer,
 )
 
+from gsplat.rendering import rasterization
+
 from core.options import Options
 
 import kiui
@@ -27,8 +29,83 @@ class GaussianRenderer:
         self.proj_matrix[2, 2] = (opt.zfar + opt.znear) / (opt.zfar - opt.znear)
         self.proj_matrix[3, 2] = - (opt.zfar * opt.znear) / (opt.zfar - opt.znear)
         self.proj_matrix[2, 3] = 1
+
+        self.K = torch.eye(3, dtype=torch.float32, device="cuda")[None, ...]
+        self.K[:, 0, 0] = self.opt.output_size / (self.tan_half_fov * 2)
+        self.K[:, 1, 1] = self.opt.output_size / (self.tan_half_fov * 2)
+        self.K[:, 0, 2] = self.opt.output_size / 2
+        self.K[:, 1, 2] = self.opt.output_size / 2
+
+
+    def render(self, gaussians, cam_view, cam_view_proj, cam_pos, bg_color=None, scale_modifier=1, mode="gsplat"):
+        if mode == "gsplat":
+            return self.render_gsplat(gaussians, cam_view, bg_color, scale_modifier)
+        elif mode == "inria":
+            return self.render_inria(gaussians, cam_view, cam_view_proj, cam_pos, bg_color, scale_modifier)
+        else:
+            raise NotImplementedError
+
+    def render_gsplat(self, gaussians, cam_view, bg_color=None, scale_modifier=1):
+        # gaussians: [B, N, 14]
+        # cam_view, cam_view_proj: [B, V, 4, 4]
+        # cam_pos: [B, V, 3]
+
+        device = gaussians.device        
+        B, V = cam_view.shape[:2]
+
+        if bg_color is None:
+            bg_color = self.bg_color
+        bg_color = bg_color[None, ...].repeat(V, 1)
+        K = self.K.repeat(V, 1, 1)
+
+        # loop...
+        images = []
+        alphas = []        
+        for b in range(B):
+
+            # pos, opacity, scale, rotation, shs
+            means3D = gaussians[b, :, 0:3].contiguous().float()
+            opacity = gaussians[b, :, 3].contiguous().float()
+            scales = gaussians[b, :, 4:7].contiguous().float() * scale_modifier
+            quats = gaussians[b, :, 7:11].contiguous().float()
+            rgbs = gaussians[b, :, 11:14].contiguous().float() # [N, 3]
+
+            # render novel views
+            view_matrix = cam_view[b].float().transpose(1, 2)
+    
+            # Rasterize visible Gaussians to image, obtain their radii (on screen).
+            rendered_images, rendered_alphas, info = rasterization(
+                means=means3D,
+                quats=quats,
+                scales=scales,
+                opacities=opacity,
+                colors=rgbs,
+                viewmats=view_matrix,
+                Ks=K,
+                width=self.opt.output_size,
+                height=self.opt.output_size,
+                near_plane=self.opt.znear,
+                far_plane=self.opt.zfar,
+                backgrounds=bg_color,
+                packed=False,
+                rasterize_mode="antialiased"                                
+            )
+
+            rendred_images = rendered_images.clamp(0, 1)
+            rendered_images = rendered_images.permute(0, 3, 1, 2)
+            rendered_alphas = rendered_alphas.permute(0, 3, 1, 2)
+            images.append(rendered_images)
+            alphas.append(rendered_alphas)            
+
+        images = torch.stack(images, dim=0)
+        alphas = torch.stack(alphas, dim=0)
+
+        return {
+            "image": images, # [B, V, 3, H, W]
+            "alpha": alphas, # [B, V, 1, H, W]
+        }
         
-    def render(self, gaussians, cam_view, cam_view_proj, cam_pos, bg_color=None, scale_modifier=1):
+    def render_inria(self, gaussians, cam_view, cam_view_proj, cam_pos, bg_color=None, scale_modifier=1):
         # gaussians: [B, N, 14]
         # cam_view, cam_view_proj: [B, V, 4, 4]
         # cam_pos: [B, V, 3]
