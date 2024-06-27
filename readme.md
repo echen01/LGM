@@ -24,7 +24,10 @@ Thanks to [@camenduru](https://github.com/camenduru)!
 pip install torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu118
 pip install -U xformers --index-url https://download.pytorch.org/whl/cu118
 
-# a modified gaussian splatting (+ depth, alpha rendering)
+# gsplat 1.0.0 ...
+pip install git+https://github.com/nerfstudio-project/gsplat.git
+
+# ... or a modified gaussian splatting (+ depth, alpha rendering)
 git clone --recursive https://github.com/ashawkey/diff-gaussian-rasterization
 pip install ./diff-gaussian-rasterization
 
