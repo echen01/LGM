@@ -70,6 +70,8 @@ class Options:
     force_cuda_rast: bool = False
     # render fancy video with gaussian scaling effect
     fancy_video: bool = False
+    # rasterizer backend
+    rasterizer: Literal['gsplat', 'inria'] = 'gsplat'
     
 
 # all the default settings
